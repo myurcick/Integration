@@ -1,0 +1,63 @@
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_PASSWORD_FILE: /run/secrets/db_password
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    secrets:
+      - db_password
+
+  redis:
+    image: redis:7-alpine
+    # Брокер не публікує порти на хост, як вимагає завдання
+    restart: always
+
+  forecast-api:
+    build:
+      context: .
+      dockerfile: forecast-service/Dockerfile
+    depends_on:
+      - postgres
+
+  orders-api:
+    build:
+      context: .
+      dockerfile: orders-service/Dockerfile
+    ports:
+      - "${ORDERS_PORT:-8000}:8000"
+    environment:
+      FORECAST_URL: http://forecast-api:8001
+      FORECAST_TIMEOUT: ${FORECAST_TIMEOUT}
+    secrets:
+      - db_password
+      - jwt_secret_key
+    depends_on:
+      - postgres
+      - redis
+
+  worker:
+    build:
+      context: .
+      dockerfile: orders-service/Dockerfile
+    # Використовуємо той самий образ, але запускаємо ARQ worker
+    command: ["uv", "run", "arq", "app.worker.WorkerSettings"]
+    environment:
+      FORECAST_URL: http://forecast-api:8001
+      FORECAST_TIMEOUT: ${FORECAST_TIMEOUT}
+    secrets:
+      - db_password
+    depends_on:
+      - postgres
+      - redis
+
+volumes:
+  pgdata:
+
+secrets:
+  db_password:
+    file: ./secrets/db_password
+  jwt_secret_key:
+    file: ./secrets/jwt_secret_key
